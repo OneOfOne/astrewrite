@@ -22,6 +22,7 @@ func Walk(node ast.Node, fn WalkFunc) ast.Node {
 	}
 	rewritten, ok := fn(node)
 	if !ok {
+		ast.Inspect(node, nukeComments)
 		return rewritten
 	}
 
@@ -384,6 +385,14 @@ func Walk(node ast.Node, fn WalkFunc) ast.Node {
 
 	fn(nil)
 	return rewritten
+}
+
+func nukeComments(n ast.Node) bool {
+	if cg, ok := n.(*ast.CommentGroup); ok {
+		cg.List = nil
+		return false
+	}
+	return true
 }
 
 func walkIdentList(list []*ast.Ident, fn WalkFunc) []*ast.Ident {
