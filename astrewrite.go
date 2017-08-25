@@ -3,12 +3,18 @@ package astrewrite
 import (
 	"fmt"
 	"go/ast"
+	"reflect"
 )
 
 // WalkFunc describes a function to be called for each node during a Walk. The
 // returned node can be used to rewrite the AST. Returning nil will remove the node.
 // Walking stops if the returned bool is false.
 type WalkFunc func(ast.Node) (ast.Node, bool)
+
+func isNil(v interface{}) bool {
+	rv := reflect.ValueOf(v)
+	return !rv.IsValid() || rv.IsNil()
+}
 
 // Walk traverses an AST in depth-first order: It starts by calling
 // fn(node); if node is nil, the node will be removed. It returns the rewritten node. If fn returns
@@ -17,7 +23,7 @@ type WalkFunc func(ast.Node) (ast.Node, bool)
 // rewrite the passed node to fn. Panics if the returned type is not the same
 // type as the original one.
 func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
-	if node == nil {
+	if isNil(node) {
 		return node
 	}
 	rewritten, ok := fn(node)
@@ -67,8 +73,10 @@ func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
 		}
 		out := n.List[:0]
 		for _, f := range n.List {
-			if f, _ = Walk(f, fn).(*ast.Field); f != nil {
-				out = append(out, f)
+			if v, ok := Walk(f, fn).(*ast.Field); ok {
+				out = append(out, v)
+			} else {
+				nukeComments(f)
 			}
 		}
 		if n.List = out; len(n.List) == 0 {
@@ -80,16 +88,19 @@ func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
 		// nothing to do
 
 	case *ast.Ellipsis:
-		if n.Elt != nil {
-			if n.Elt, _ = Walk(n.Elt, fn).(ast.Expr); n.Elt == nil {
-				return
-			}
+		if v, ok := Walk(n.Elt, fn).(ast.Expr); ok {
+			n.Elt = v
+		} else {
+			return
 		}
 
 	case *ast.FuncLit:
-		if n.Type, _ = Walk(n.Type, fn).(*ast.FuncType); n.Type == nil {
+		if t, ok := Walk(n.Type, fn).(*ast.FuncType); ok {
+			n.Type = t
+		} else {
 			return
 		}
+
 		n.Body = Walk(n.Body, fn).(*ast.BlockStmt)
 
 	case *ast.CompositeLit:
@@ -149,12 +160,12 @@ func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
 
 	// Types
 	case *ast.ArrayType:
-		if n.Len != nil {
-			if n.Len, _ = Walk(n.Len, fn).(ast.Expr); n.Len == nil {
-				return
-			}
+		if v, ok := Walk(n.Len, fn).(ast.Expr); ok {
+			n.Len = v
 		}
-		if n.Elt, _ = Walk(n.Elt, fn).(ast.Expr); n.Elt == nil {
+		if v, ok := Walk(n.Elt, fn).(ast.Expr); ok {
+			n.Elt = v
+		} else {
 			return
 		}
 
@@ -342,11 +353,11 @@ func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
 			n.Doc = Walk(n.Doc, fn).(*ast.CommentGroup)
 		}
 	case *ast.FuncDecl:
-		if n.Doc != nil {
-			n.Doc = Walk(n.Doc, fn).(*ast.CommentGroup)
-		}
-		if n.Recv != nil {
-			n.Recv = Walk(n.Recv, fn).(*ast.FieldList)
+		n.Doc, _ = Walk(n.Doc, fn).(*ast.CommentGroup)
+		if v, ok := Walk(n.Recv, fn).(*ast.FieldList); ok {
+			n.Recv = v
+		} else {
+			return
 		}
 		n.Name = Walk(n.Name, fn).(*ast.Ident)
 		n.Type = Walk(n.Type, fn).(*ast.FuncType)
@@ -383,12 +394,18 @@ func Walk(node ast.Node, fn WalkFunc) (ret ast.Node) {
 
 func nukeComments(root ast.Node) {
 	ast.Inspect(root, func(n ast.Node) bool {
-		if cg, ok := n.(*ast.CommentGroup); ok {
-			cg.List = nil
+		if n == nil {
 			return false
 		}
-		return true
-
+		switch n := n.(type) {
+		case *ast.CommentGroup:
+			n.List = nil
+			return false
+		case nil:
+			return false
+		default:
+			return true
+		}
 	})
 }
 
